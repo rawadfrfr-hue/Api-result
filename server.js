@@ -2,140 +2,220 @@
  * Standalone Express server for Result API
  */
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); // Serves index.html
 
-// 1x1 transparent PNG base64
-const dummyCaptchaBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const SUBJECT_MAP = {
+  '101': 'BANGLA',
+  '102': 'BANGLA-II',
+  '107': 'ENGLISH',
+  '108': 'ENGLISH-II',
+  '109': 'MATHEMATICS',
+  '127': 'SCIENCE',
+  '110': 'GEOGRAPHY & ENVIRONMENT',
+  '111': 'ISLAM & MORAL EDUCATION',
+  '112': 'HINDU RELIGION & MORAL EDUCATION',
+  '113': 'BUDDHIST RELIGION',
+  '114': 'CHRISTIAN RELIGION',
+  '136': 'HIGHER MATHEMATICS',
+  '137': 'CHEMISTRY',
+  '138': 'BIOLOGY',
+  '140': 'CIVICS & CITIZENSHIP',
+  '147': 'PHYSICAL EDUCATION, HEALTH & SPORTS',
+  '150': 'AGRICULTURE STUDIES',
+  '151': 'HOME SCIENCE',
+  '153': 'HISTORY OF BANGLADESH & WORLD CIVILIZATION',
+  '154': 'INFORMATION & COMMUNICATION TECHNOLOGY',
+  '156': 'CAREER EDUCATION',
+};
 
-// Endpoint 1: Init Session
-app.get('/api/init-session', async (req, res) => {
-  try {
-    const sessionId = uuidv4();
-    res.json({ sessionId, captchaBase64: dummyCaptchaBase64 });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to init session' });
+function parseSubjectDetails(displayDetails) {
+  if (!displayDetails) return [];
+  const subjects = [];
+  const parts = displayDetails.split(',');
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx === -1) continue;
+
+    const code = trimmed.slice(0, colonIdx).trim();
+    const resultPart = trimmed.slice(colonIdx + 1).trim();
+    const equalIdx = resultPart.lastIndexOf('=');
+    const grade = equalIdx !== -1 ? resultPart.slice(equalIdx + 1).trim() : resultPart;
+    const name = SUBJECT_MAP[code] || `Subject ${code}`;
+
+    subjects.push({ code, name, grade });
   }
+
+  return subjects;
+}
+
+// Endpoint: Captcha
+app.get('/api/captcha', async (req, res) => {
+  const userAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const cRes = await fetch(`https://eboardresults.com/v2/captcha?t=${Date.now()}`, {
+      headers: {
+        'User-Agent': userAgent,
+        'Referer': 'https://eboardresults.com/v2/home',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (cRes.ok) {
+      const setCookie = cRes.headers.get('set-cookie') || '';
+      let session = '';
+      const match = setCookie.match(/EBRSESSID2=([^;]+)/);
+      if (match) {
+        session = match[1];
+      } else {
+        session = setCookie.split(';')[0];
+      }
+
+      const buffer = await cRes.arrayBuffer();
+      if (buffer && buffer.byteLength > 100 && session) {
+        const base64 = Buffer.from(buffer).toString('base64');
+        return res.json({
+          success: true,
+          image: `data:image/jpeg;base64,${base64}`,
+          session,
+          source: 'eboardresults',
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('eboardresults captcha failed in express:', err);
+  }
+
+  // Fallback
+  try {
+    const fbRes = await fetch('https://webbasedresult.bd/wp-admin/admin-ajax.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': userAgent },
+      body: 'action=bdrc_captcha',
+    });
+    if (fbRes.ok) {
+      const data = await fbRes.json();
+      if (data.success && data.data && data.data.image) {
+        return res.json({
+          success: true,
+          image: data.data.image,
+          session: data.data.session || '',
+          source: 'webbasedresult',
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Fallback failed:', err);
+  }
+
+  res.status(500).json({ success: false, error: 'Failed to load captcha.' });
 });
 
-// Endpoint 2: Refresh Captcha
-app.get('/api/refresh-captcha', async (req, res) => {
-  const { sessionId } = req.query;
-  if (!sessionId) return res.status(400).json({ error: 'Missing sessionId' });
-  
-  try {
-    res.json({ captchaBase64: dummyCaptchaBase64 });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to refresh captcha' });
-  }
-});
-
-// Endpoint 3: Get Result
+// Endpoint: Get Result
 app.post('/api/get-result', async (req, res) => {
-  const { board, exam, year, roll, reg } = req.body;
-  
+  const { board, exam, year, roll, reg, captcha, session, source } = req.body;
+
+  if (!roll || !board || !exam || !year) {
+    return res.status(400).json({ success: false, error: 'Missing required parameters.' });
+  }
+
+  if (!captcha) {
+    return res.status(400).json({ success: false, error: 'Please enter the 4-digit Security Key.' });
+  }
+
+  const userAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  let normalizedBoard = String(board).toLowerCase();
+  if (normalizedBoard === 'technical') normalizedBoard = 'tec';
+  if (normalizedBoard === 'rajashai') normalizedBoard = 'rajshahi';
+
   try {
-    const commonHeaders = {
-      'Origin': 'https://eboardresultsapp.com',
-      'Referer': 'https://eboardresultsapp.com/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*'
-    };
+    const postData = new URLSearchParams();
+    postData.append('exam', String(exam).toLowerCase());
+    postData.append('year', String(year));
+    postData.append('board', normalizedBoard);
+    postData.append('result_type', '1');
+    postData.append('roll', String(roll).trim());
+    postData.append('reg', String(reg || '').trim());
+    postData.append('captcha', String(captcha).trim());
 
-    let response = null;
-    let providerErrorDetail = '';
+    const cookieHeader = session ? `EBRSESSID2=${session}` : '';
 
-    // Attempt 1: api.bangladeshgov.org
-    try {
-      const apiUrl = `https://api.bangladeshgov.org/?exam=${encodeURIComponent(exam)}&year=${encodeURIComponent(year)}&board=${encodeURIComponent(board)}&roll=${encodeURIComponent(roll)}&reg=${encodeURIComponent(reg)}`;
-      response = await fetch(apiUrl, {
-        headers: commonHeaders
-      });
-    } catch (err) {
-      providerErrorDetail = `api.bangladeshgov.org error: ${err.message}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const rRes = await fetch('https://eboardresults.com/v2/getres', {
+      method: 'POST',
+      headers: {
+        'User-Agent': userAgent,
+        'Referer': 'https://eboardresults.com/v2/home',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookieHeader,
+      },
+      body: postData.toString(),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!rRes.ok) {
+      return res.status(502).json({ success: false, error: 'Education Board server temporarily busy.' });
     }
 
-    // Attempt 2: result.bangladeshgov.org/result
-    if (!response || !response.ok) {
-      if (response) {
-        const bodySnippet = await response.text().catch(() => '');
-        providerErrorDetail = `api.bangladeshgov.org HTTP ${response.status}: ${bodySnippet.slice(0, 120)}`;
-      }
-      try {
-        const postData = new URLSearchParams({
-          exam: String(exam),
-          year: String(year),
-          board: String(board),
-          result_type: '1',
-          roll: String(roll),
-          reg: String(reg)
-        });
+    const data = await rRes.json();
 
-        const fallbackResponse = await fetch('https://result.bangladeshgov.org/result', {
-          method: 'POST',
-          headers: {
-            ...commonHeaders,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: postData.toString()
-        });
-
-        if (fallbackResponse.ok) {
-          response = fallbackResponse;
-        } else {
-          const fbBody = await fallbackResponse.text().catch(() => '');
-          providerErrorDetail += ` | result.bangladeshgov.org HTTP ${fallbackResponse.status}: ${fbBody.slice(0, 120)}`;
-        }
-      } catch (err) {
-        providerErrorDetail += ` | result.bangladeshgov.org error: ${err.message}`;
-      }
-    }
-
-    if (!response || !response.ok) {
-      return res.status(502).json({ 
-        success: false, 
-        error: `Provider Server Error: ${providerErrorDetail || 'Failed to fetch data from the provider'}` 
+    if (data.status !== 0) {
+      const errorMsg = data.msg || data.message || 'Could not validate security key.';
+      return res.json({
+        success: false,
+        error: errorMsg,
+        isCaptchaError: errorMsg.toLowerCase().includes('captcha') || errorMsg.toLowerCase().includes('security key'),
       });
     }
 
-    let resultData;
-    try {
-      resultData = await response.json();
-    } catch(e) {
-      return res.status(502).json({ success: false, error: 'Invalid JSON response from provider' });
-    }
-    
-    if (resultData.status === 'error' || resultData.status === 1 || resultData.error) {
-      return res.json({ 
-        success: false, 
-        error: resultData.message || resultData.msg || resultData.error || 'Result not found or verification failed' 
-      });
-    }
+    const resultObj = data.res || {};
+    const subjects = parseSubjectDetails(resultObj.display_details);
 
-    const data = resultData.res || resultData.data || resultData;
-    
-    const extractedData = {
-      roll: data.roll || roll || '',
-      reg: data.reg || data.registration || reg || '',
-      name: data.name || data.student_name || '',
-      father: data.father || data.father_name || '',
-      mother: data.mother || data.mother_name || '',
-      board: data.board || board || '',
-      gpa: data.gpa || data.result || ''
-    };
-
-    res.json({ success: true, result: extractedData });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Submission failed' });
+    return res.json({
+      success: true,
+      result: {
+        roll: resultObj.roll_no || roll,
+        reg: resultObj.regno || reg || '',
+        name: resultObj.name || '',
+        father: resultObj.fname || '',
+        mother: resultObj.mname || '',
+        board: resultObj.board_name || board,
+        session: resultObj.session || '',
+        group: resultObj.stud_group || '',
+        dob: resultObj.dob || '',
+        institute: resultObj.inst_name || resultObj.eiin || '',
+        gpa: resultObj.res_detail === 'P' ? (resultObj.gpa || 'PASSED') : (resultObj.res_detail || resultObj.gpa || ''),
+        subjects,
+      },
+    });
+  } catch (err) {
+    console.error('Express get-result error:', err);
+    res.status(500).json({ success: false, error: 'Failed to retrieve result.' });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Standalone Express server running on port ${PORT}`));
+const PORT = 3000;
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

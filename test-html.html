@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Test Widget</title></head>
+<body>
+<div id="eb-result-widget"></div>
+<script>
+(function() {
+    var d = new Date(), r = d.getTime();
+    var s = document.createElement("script");
+    s.src = "https://result.bangladeshgov.org/widget/eb.js?v=" + r;
+    s.async = true;
+    document.getElementById("eb-result-widget").appendChild(s);
+})();
+</script>
+</body>
+</html>

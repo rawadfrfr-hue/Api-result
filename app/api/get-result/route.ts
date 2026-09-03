@@ -3,108 +3,219 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+const SUBJECT_MAP: Record<string, string> = {
+  '101': 'BANGLA',
+  '102': 'BANGLA-II',
+  '107': 'ENGLISH',
+  '108': 'ENGLISH-II',
+  '109': 'MATHEMATICS',
+  '127': 'SCIENCE',
+  '110': 'GEOGRAPHY & ENVIRONMENT',
+  '111': 'ISLAM & MORAL EDUCATION',
+  '112': 'HINDU RELIGION & MORAL EDUCATION',
+  '113': 'BUDDHIST RELIGION',
+  '114': 'CHRISTIAN RELIGION',
+  '136': 'HIGHER MATHEMATICS',
+  '137': 'CHEMISTRY',
+  '138': 'BIOLOGY',
+  '140': 'CIVICS & CITIZENSHIP',
+  '147': 'PHYSICAL EDUCATION, HEALTH & SPORTS',
+  '150': 'AGRICULTURE STUDIES',
+  '151': 'HOME SCIENCE',
+  '153': 'HISTORY OF BANGLADESH & WORLD CIVILIZATION',
+  '154': 'INFORMATION & COMMUNICATION TECHNOLOGY',
+  '156': 'CAREER EDUCATION',
+};
+
+function parseSubjectDetails(displayDetails?: string): Array<{ code: string; name: string; grade: string }> {
+  if (!displayDetails) return [];
+  const subjects: Array<{ code: string; name: string; grade: string }> = [];
+  const parts = displayDetails.split(',');
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx === -1) continue;
+
+    const code = trimmed.slice(0, colonIdx).trim();
+    const resultPart = trimmed.slice(colonIdx + 1).trim();
+    const equalIdx = resultPart.lastIndexOf('=');
+    const grade = equalIdx !== -1 ? resultPart.slice(equalIdx + 1).trim() : resultPart;
+    const name = SUBJECT_MAP[code] || `Subject ${code}`;
+
+    subjects.push({ code, name, grade });
+  }
+
+  return subjects;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { board, exam, year, roll, reg } = body;
+    const { board, exam, year, roll, reg, captcha, session, source } = body;
 
-    const commonHeaders = {
-      'Origin': 'https://eboardresultsapp.com',
-      'Referer': 'https://eboardresultsapp.com/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*'
-    };
+    if (!roll || !board || !exam || !year) {
+      return NextResponse.json(
+        { success: false, error: 'Please provide Board, Examination, Year, and Roll number.' },
+        { status: 400 }
+      );
+    }
 
-    let response: Response | null = null;
-    let providerErrorDetail = '';
+    if (!captcha) {
+      return NextResponse.json(
+        { success: false, error: 'Please enter the 4-digit Security Key shown in the image.' },
+        { status: 400 }
+      );
+    }
 
-    // Attempt 1: api.bangladeshgov.org
-    try {
-      const apiUrl = `https://api.bangladeshgov.org/?exam=${encodeURIComponent(exam)}&year=${encodeURIComponent(year)}&board=${encodeURIComponent(board)}&roll=${encodeURIComponent(roll)}&reg=${encodeURIComponent(reg)}`;
-      response = await fetch(apiUrl, {
-        headers: commonHeaders,
-        cache: 'no-store'
+    const userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+    // Normalize board
+    let normalizedBoard = String(board).toLowerCase();
+    if (normalizedBoard === 'technical') normalizedBoard = 'tec';
+    if (normalizedBoard === 'rajashai') normalizedBoard = 'rajshahi';
+
+    // Handler 1: webbasedresult.bd fallback source
+    if (source === 'webbasedresult') {
+      const postBody = new URLSearchParams({
+        action: 'bdrc_fetch',
+        exam: String(exam).toLowerCase(),
+        year: String(year),
+        board: normalizedBoard,
+        result_type: '1',
+        roll: String(roll).trim(),
+        reg: String(reg || '').trim(),
+        captcha: String(captcha).trim(),
+        session: String(session || ''),
       });
-    } catch (err: any) {
-      providerErrorDetail = `api.bangladeshgov.org error: ${err.message}`;
-    }
 
-    // Attempt 2: If attempt 1 failed or returned non-200, try result.bangladeshgov.org/result
-    if (!response || !response.ok) {
-      if (response) {
-        const bodySnippet = await response.text().catch(() => '');
-        providerErrorDetail = `api.bangladeshgov.org HTTP ${response.status}: ${bodySnippet.slice(0, 120)}`;
+      const response = await fetch('https://webbasedresult.bd/wp-admin/admin-ajax.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': userAgent,
+        },
+        body: postBody.toString(),
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        return NextResponse.json({ success: false, error: 'Server temporarily busy. Please try again.' }, { status: 502 });
       }
-      try {
-        const postData = new URLSearchParams({
-          exam: String(exam),
-          year: String(year),
-          board: String(board),
-          result_type: '1',
-          roll: String(roll),
-          reg: String(reg)
-        });
 
-        const fallbackResponse = await fetch('https://result.bangladeshgov.org/result', {
-          method: 'POST',
-          headers: {
-            ...commonHeaders,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: postData.toString(),
-          cache: 'no-store'
-        });
-
-        if (fallbackResponse.ok) {
-          response = fallbackResponse;
-        } else {
-          const fbBody = await fallbackResponse.text().catch(() => '');
-          providerErrorDetail += ` | result.bangladeshgov.org HTTP ${fallbackResponse.status}: ${fbBody.slice(0, 120)}`;
-        }
-      } catch (err: any) {
-        providerErrorDetail += ` | result.bangladeshgov.org error: ${err.message}`;
+      const resData = await response.json();
+      if (!resData.success) {
+        const errorMsg =
+          (resData.data && resData.data.message) || 'Result not found or security key did not match. Please try again.';
+        return NextResponse.json({ success: false, error: errorMsg });
       }
-    }
 
-    if (!response || !response.ok) {
-      return NextResponse.json({ 
-        success: false, 
-        error: `Provider Server Error: ${providerErrorDetail || 'Failed to fetch data from the provider'}` 
-      }, { status: 502 });
-    }
-
-    let resultData;
-    try {
-      resultData = await response.json();
-    } catch (e) {
-      return NextResponse.json({ success: false, error: 'Invalid JSON response from provider' }, { status: 502 });
-    }
-
-    if (resultData.status === 'error' || resultData.status === 1 || resultData.error) {
-      return NextResponse.json({ 
-        success: false, 
-        error: resultData.message || resultData.msg || resultData.error || 'Result not found or verification failed' 
+      const d = resData.data || {};
+      return NextResponse.json({
+        success: true,
+        result: {
+          roll: d.roll || roll,
+          reg: d.reg || reg || '',
+          name: d.name || d.student_name || '',
+          father: d.father || d.father_name || '',
+          mother: d.mother || d.mother_name || '',
+          board: d.board || board,
+          gpa: d.gpa || d.result || '',
+          institute: d.inst_name || d.institute || '',
+          group: d.group || '',
+          session: d.session || '',
+          subjects: d.subjects || [],
+        },
       });
     }
 
-    const data = resultData.res || resultData.data || resultData;
+    // Handler 2: Official eboardresults.com server
+    const postData = new URLSearchParams();
+    postData.append('exam', String(exam).toLowerCase());
+    postData.append('year', String(year));
+    postData.append('board', normalizedBoard);
+    postData.append('result_type', '1');
+    postData.append('roll', String(roll).trim());
+    postData.append('reg', String(reg || '').trim());
+    postData.append('captcha', String(captcha).trim());
 
-    const extractedData = {
-      roll: data.roll || roll || '',
-      reg: data.reg || data.registration || reg || '',
-      name: data.name || data.student_name || '',
-      father: data.father || data.father_name || '',
-      mother: data.mother || data.mother_name || '',
-      board: data.board || board || '',
-      gpa: data.gpa || data.result || ''
+    const cookieHeader = session ? `EBRSESSID2=${session}` : '';
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch('https://eboardresults.com/v2/getres', {
+      method: 'POST',
+      headers: {
+        'User-Agent': userAgent,
+        'Referer': 'https://eboardresults.com/v2/home',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookieHeader,
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: postData.toString(),
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { success: false, error: `Education Board server returned HTTP ${response.status}. Please try again.` },
+        { status: 502 }
+      );
+    }
+
+    const data = await response.json();
+
+    // Check status
+    if (data.status !== 0) {
+      const errorMsg =
+        data.msg || data.message || 'Could not validate security key. Please check the code and try again.';
+      return NextResponse.json({
+        success: false,
+        error: errorMsg,
+        isCaptchaError: errorMsg.toLowerCase().includes('captcha') || errorMsg.toLowerCase().includes('security key'),
+      });
+    }
+
+    const res = data.res || {};
+    const subjects = parseSubjectDetails(res.display_details);
+
+    const extractedResult = {
+      roll: res.roll_no || roll,
+      reg: res.regno || reg || '',
+      name: res.name || '',
+      father: res.fname || '',
+      mother: res.mname || '',
+      board: res.board_name || board,
+      session: res.session || '',
+      group: res.stud_group || '',
+      dob: res.dob || '',
+      institute: res.inst_name || res.eiin || '',
+      gpa: res.res_detail === 'P' ? (res.gpa || 'PASSED') : (res.res_detail || res.gpa || ''),
+      statusDetail: res.res_detail || '',
+      subjects,
     };
 
     return NextResponse.json({
       success: true,
-      result: extractedData
+      result: extractedResult,
     });
-  } catch (error: any) {
-    console.error('Submission error:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+  } catch (err: any) {
+    console.error('get-result error:', err);
+    if (err.name === 'AbortError') {
+      return NextResponse.json(
+        { success: false, error: 'Connection to Education Board server timed out. Please try again.' },
+        { status: 504 }
+      );
+    }
+    return NextResponse.json(
+      { success: false, error: err.message || 'Internal server error while fetching result.' },
+      { status: 500 }
+    );
   }
 }
