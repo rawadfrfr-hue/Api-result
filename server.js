@@ -41,35 +41,84 @@ app.post('/api/get-result', async (req, res) => {
   const { board, exam, year, roll, reg } = req.body;
   
   try {
-    const apiUrl = `https://api.bangladeshgov.org/?exam=${exam}&year=${year}&board=${board}&roll=${roll}&reg=${reg}`;
-    
-    // Use dynamic import for fetch since it's a built-in Node 18+ global but could be polyfilled
-    const response = await fetch(apiUrl, {
-      headers: {
-        'Origin': 'https://eboardresultsapp.com',
-        'Referer': 'https://eboardresultsapp.com/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*'
+    const commonHeaders = {
+      'Origin': 'https://eboardresultsapp.com',
+      'Referer': 'https://eboardresultsapp.com/',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*'
+    };
+
+    let response = null;
+    let providerErrorDetail = '';
+
+    // Attempt 1: api.bangladeshgov.org
+    try {
+      const apiUrl = `https://api.bangladeshgov.org/?exam=${encodeURIComponent(exam)}&year=${encodeURIComponent(year)}&board=${encodeURIComponent(board)}&roll=${encodeURIComponent(roll)}&reg=${encodeURIComponent(reg)}`;
+      response = await fetch(apiUrl, {
+        headers: commonHeaders
+      });
+    } catch (err) {
+      providerErrorDetail = `api.bangladeshgov.org error: ${err.message}`;
+    }
+
+    // Attempt 2: result.bangladeshgov.org/result
+    if (!response || !response.ok) {
+      if (response) {
+        const bodySnippet = await response.text().catch(() => '');
+        providerErrorDetail = `api.bangladeshgov.org HTTP ${response.status}: ${bodySnippet.slice(0, 120)}`;
       }
-    });
-    
-    if (!response.ok) {
-        return res.status(502).json({ success: false, error: 'Failed to fetch data from the provider' });
+      try {
+        const postData = new URLSearchParams({
+          exam: String(exam),
+          year: String(year),
+          board: String(board),
+          result_type: '1',
+          roll: String(roll),
+          reg: String(reg)
+        });
+
+        const fallbackResponse = await fetch('https://result.bangladeshgov.org/result', {
+          method: 'POST',
+          headers: {
+            ...commonHeaders,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: postData.toString()
+        });
+
+        if (fallbackResponse.ok) {
+          response = fallbackResponse;
+        } else {
+          const fbBody = await fallbackResponse.text().catch(() => '');
+          providerErrorDetail += ` | result.bangladeshgov.org HTTP ${fallbackResponse.status}: ${fbBody.slice(0, 120)}`;
+        }
+      } catch (err) {
+        providerErrorDetail += ` | result.bangladeshgov.org error: ${err.message}`;
+      }
+    }
+
+    if (!response || !response.ok) {
+      return res.status(502).json({ 
+        success: false, 
+        error: `Provider Server Error: ${providerErrorDetail || 'Failed to fetch data from the provider'}` 
+      });
     }
 
     let resultData;
     try {
-        resultData = await response.json();
+      resultData = await response.json();
     } catch(e) {
-        return res.status(502).json({ success: false, error: 'Invalid response from provider' });
+      return res.status(502).json({ success: false, error: 'Invalid JSON response from provider' });
     }
     
-    if (resultData.status === 'error' || resultData.error) {
-         return res.json({ success: false, error: resultData.message || resultData.error || 'Validation Failed' });
+    if (resultData.status === 'error' || resultData.status === 1 || resultData.error) {
+      return res.json({ 
+        success: false, 
+        error: resultData.message || resultData.msg || resultData.error || 'Result not found or verification failed' 
+      });
     }
 
-    // Attempt to map flexibly
-    const data = resultData.data || resultData;
+    const data = resultData.res || resultData.data || resultData;
     
     const extractedData = {
       roll: data.roll || roll || '',
