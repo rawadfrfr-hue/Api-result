@@ -6,11 +6,7 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { sessionId, board, exam, year, roll, reg, captcha } = body;
-
-    if (!sessionId) {
-      return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
-    }
+    const { board, exam, year, roll, reg } = body;
 
     const apiUrl = `https://api.bangladeshgov.org/?exam=${exam}&year=${year}&board=${board}&roll=${roll}&reg=${reg}`;
     

@@ -38,8 +38,7 @@ app.get('/api/refresh-captcha', async (req, res) => {
 
 // Endpoint 3: Get Result
 app.post('/api/get-result', async (req, res) => {
-  const { sessionId, board, exam, year, roll, reg, captcha } = req.body;
-  if (!sessionId) return res.status(400).json({ error: 'Missing sessionId' });
+  const { board, exam, year, roll, reg } = req.body;
   
   try {
     const apiUrl = `https://api.bangladeshgov.org/?exam=${exam}&year=${year}&board=${board}&roll=${roll}&reg=${reg}`;

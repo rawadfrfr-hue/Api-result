@@ -118,18 +118,6 @@
           <label id="label-reg" class="sm:col-span-4 text-sm font-bold text-[#333333]" for="reg">Registration Number of Examinee</label>
           <input type="text" id="reg" class="sm:col-span-8 w-full p-2 border border-gray-300 rounded-[4px] text-sm bg-white transition-shadow" required>
         </div>
-        
-        <div class="grid grid-cols-1 sm:grid-cols-12 items-start gap-2 sm:gap-4 mt-2">
-          <label id="label-captcha" class="sm:col-span-4 text-sm font-bold text-[#333333] pt-1">Robot Prevention Technique<br>(CAPTCHA)</label>
-          <div class="sm:col-span-8 flex flex-col items-start gap-3">
-            <canvas id="captcha-canvas" width="200" height="70" class="w-[200px] h-[70px] cursor-pointer object-cover"></canvas>
-            <button type="button" id="reload-captcha-btn" class="bg-[#DE5565] hover:bg-[#c9302c] text-white py-1.5 px-3 rounded-md text-sm font-medium w-fit flex items-center space-x-1.5 transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              <span id="captcha-reload-text">Click to load another image</span>
-            </button>
-            <input type="text" id="captcha-input" class="w-full p-2 border border-gray-300 rounded-[4px] text-sm bg-white transition-shadow" placeholder="Type the digits visible on the image" required>
-          </div>
-        </div>
       </div>
       
       <!-- Buttons -->
@@ -187,78 +175,32 @@
   </main>
 
   <script>
-    // State
-    let sessionId = null;
-
-    // DOM Elements
-    const captchaImg = document.getElementById('captcha-canvas');
-    
-    async function initSession() {
-      try {
-        const res = await fetch('/api/init-session');
-        const data = await res.json();
-        if (data.sessionId && data.captchaBase64) {
-          sessionId = data.sessionId;
-          
-          const captchaEl = document.getElementById('captcha-canvas');
-          if (captchaEl.tagName.toLowerCase() === 'canvas') {
-            const img = document.createElement('img');
-            img.id = 'captcha-canvas';
-            img.className = captchaEl.className;
-            img.src = `data:image/png;base64,${data.captchaBase64}`;
-            img.onclick = refreshCaptcha;
-            captchaEl.parentNode.replaceChild(img, captchaEl);
-          } else {
-            captchaEl.src = `data:image/png;base64,${data.captchaBase64}`;
-          }
-        }
-      } catch (err) {
-        console.error('Failed to init session', err);
-      }
-    }
-
-    async function refreshCaptcha() {
-      if (!sessionId) return initSession();
-      try {
-        const res = await fetch(`/api/refresh-captcha?sessionId=${sessionId}`);
-        const data = await res.json();
-        if (data.captchaBase64) {
-          document.getElementById('captcha-canvas').src = `data:image/png;base64,${data.captchaBase64}`;
-        }
-      } catch (err) {
-        console.error('Failed to refresh captcha', err);
-      }
-    }
-
-    document.getElementById('reload-captcha-btn')?.addEventListener('click', refreshCaptcha);
-    
     document.querySelectorAll('.search-again-trigger').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', () => { 
          document.getElementById('result-display').classList.add('hidden');
          document.getElementById('form-container').classList.remove('hidden');
          document.getElementById('result-form').reset();
-         document.getElementById('captcha-input').value = '';
-         refreshCaptcha();
+         
       });
     });
 
     document.getElementById('result-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (!sessionId) return alert('Session not initialized. Please refresh the page.');
       
       const submitBtn = document.getElementById('submit-btn');
       const origText = submitBtn.textContent;
+      
       submitBtn.textContent = 'Processing...';
+      
+
       submitBtn.disabled = true;
 
       const payload = {
-        sessionId,
         board: document.getElementById('board').value,
         exam: document.getElementById('examination').value,
         year: document.getElementById('year').value,
         roll: document.getElementById('roll').value.trim(),
-        reg: document.getElementById('reg').value.trim(),
-        captcha: document.getElementById('captcha-input').value.trim()
+        reg: document.getElementById('reg').value.trim()
       };
 
       try {
@@ -268,36 +210,34 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-
+        
         if (res.ok && data.success) {
           // Inject data into DOM
-          document.getElementById('res-roll').textContent = data.result.roll;
-          document.getElementById('res-reg').textContent = data.result.reg;
-          document.getElementById('res-name').textContent = data.result.name;
-          document.getElementById('res-father').textContent = data.result.father;
-          document.getElementById('res-mother').textContent = data.result.mother;
-          document.getElementById('res-board').textContent = data.result.board;
-          document.getElementById('res-gpa').textContent = data.result.gpa;
+          document.getElementById('res-roll').textContent = data.result.roll || '';
+          document.getElementById('res-reg').textContent = data.result.reg || '';
+          document.getElementById('res-name').textContent = data.result.name || '';
+          document.getElementById('res-father').textContent = data.result.father || '';
+          document.getElementById('res-mother').textContent = data.result.mother || '';
+          document.getElementById('res-board').textContent = data.result.board || '';
+          document.getElementById('res-gpa').textContent = data.result.gpa || '';
           
           document.getElementById('form-container').classList.add('hidden');
           document.getElementById('result-display').classList.remove('hidden');
         } else {
+          
           alert(data.error || 'Validation failed. Please try again.');
-          // Auto-refresh on error
-          refreshCaptcha();
-          document.getElementById('captcha-input').value = '';
+
         }
       } catch (err) {
         console.error('Submission error', err);
-        alert('An error occurred during submission.');
+        
+          alert('An error occurred during submission.');
+
       } finally {
         submitBtn.textContent = origText;
         submitBtn.disabled = false;
       }
     });
-
-    // Initialize on load
-    initSession();
   </script>
 </body>
 </html>
