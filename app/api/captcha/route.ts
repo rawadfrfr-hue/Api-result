@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const maxDuration = 30;
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
+};
 
 export async function GET() {
   const userAgent =
@@ -9,7 +17,7 @@ export async function GET() {
   // Attempt 1: Direct eboardresults.com official captcha
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
 
     const res = await fetch(`https://eboardresults.com/v2/captcha?t=${Date.now()}`, {
       headers: {
@@ -35,12 +43,15 @@ export async function GET() {
       const buffer = await res.arrayBuffer();
       if (buffer && buffer.byteLength > 100 && session) {
         const base64 = Buffer.from(buffer).toString('base64');
-        return NextResponse.json({
-          success: true,
-          image: `data:image/jpeg;base64,${base64}`,
-          session,
-          source: 'eboardresults',
-        });
+        return NextResponse.json(
+          {
+            success: true,
+            image: `data:image/jpeg;base64,${base64}`,
+            session,
+            source: 'eboardresults',
+          },
+          { headers: NO_CACHE_HEADERS }
+        );
       }
     }
   } catch (err) {
@@ -50,7 +61,7 @@ export async function GET() {
   // Attempt 2: Fallback to webbasedresult.bd
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     const fbRes = await fetch('https://webbasedresult.bd/wp-admin/admin-ajax.php', {
       method: 'POST',
@@ -67,12 +78,15 @@ export async function GET() {
     if (fbRes.ok) {
       const data = await fbRes.json();
       if (data.success && data.data && data.data.image) {
-        return NextResponse.json({
-          success: true,
-          image: data.data.image,
-          session: data.data.session || '',
-          source: 'webbasedresult',
-        });
+        return NextResponse.json(
+          {
+            success: true,
+            image: data.data.image,
+            session: data.data.session || '',
+            source: 'webbasedresult',
+          },
+          { headers: NO_CACHE_HEADERS }
+        );
       }
     }
   } catch (err) {
@@ -81,6 +95,7 @@ export async function GET() {
 
   return NextResponse.json(
     { success: false, error: 'Could not load Security Key. Please reload or check your connection.' },
-    { status: 500 }
+    { status: 500, headers: NO_CACHE_HEADERS }
   );
 }
+

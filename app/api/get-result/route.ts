@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const revalidate = 0;
+export const maxDuration = 30;
 
 const SUBJECT_MAP: Record<string, string> = {
   '101': 'BANGLA',
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest) {
     const cookieHeader = session ? `EBRSESSID2=${session}` : '';
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
 
     const response = await fetch('https://eboardresults.com/v2/getres', {
       method: 'POST',
