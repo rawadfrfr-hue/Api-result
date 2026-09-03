@@ -44,7 +44,14 @@ app.post('/api/get-result', async (req, res) => {
     const apiUrl = `https://api.bangladeshgov.org/?exam=${exam}&year=${year}&board=${board}&roll=${roll}&reg=${reg}`;
     
     // Use dynamic import for fetch since it's a built-in Node 18+ global but could be polyfilled
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Origin': 'https://eboardresultsapp.com',
+        'Referer': 'https://eboardresultsapp.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*'
+      }
+    });
     
     if (!response.ok) {
         return res.status(502).json({ success: false, error: 'Failed to fetch data from the provider' });

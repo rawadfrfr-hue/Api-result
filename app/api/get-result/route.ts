@@ -10,7 +10,15 @@ export async function POST(req: NextRequest) {
 
     const apiUrl = `https://api.bangladeshgov.org/?exam=${exam}&year=${year}&board=${board}&roll=${roll}&reg=${reg}`;
     
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Origin': 'https://eboardresultsapp.com',
+        'Referer': 'https://eboardresultsapp.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*'
+      },
+      cache: 'no-store'
+    });
     if (!response.ok) {
         return NextResponse.json({ success: false, error: 'Failed to fetch data from the provider' }, { status: 502 });
     }
